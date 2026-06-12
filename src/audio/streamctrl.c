@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
-
+#include "Equalizer.h"
 #include "streamctrl.h"
 
 #include <zephyr/zbus/zbus.h>
@@ -29,9 +29,13 @@
 #include "BootState.h"
 
 #include <zephyr/logging/log.h>
+#include "filter_state.h"
+
+volatile bool g_lowpass_on = false; 
 LOG_MODULE_REGISTER(streamctrl, CONFIG_MAIN_LOG_LEVEL);
 
 ZBUS_SUBSCRIBER_DEFINE(button_evt_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
+ZBUS_SUBSCRIBER_DEFINE(filter_thread_sub, CONFIG_BUTTON_MSG_SUB_QUEUE_SIZE);
 
 ZBUS_MSG_SUBSCRIBER_DEFINE(le_audio_evt_sub);
 
@@ -44,12 +48,15 @@ ZBUS_OBS_DECLARE(volume_evt_sub);
 
 static struct k_thread button_msg_sub_thread_data;
 static struct k_thread le_audio_msg_sub_thread_data;
+static struct k_thread filter_thread_data;
 
 static k_tid_t button_msg_sub_thread_id;
 static k_tid_t le_audio_msg_sub_thread_id;
+static k_tid_t filter_thread_id;
 
 K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
+K_THREAD_STACK_DEFINE(filter_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
 
@@ -57,6 +64,22 @@ static enum stream_state strm_state = STATE_PAUSED;
 static void stream_state_set(enum stream_state stream_state_new)
 {
 	strm_state = stream_state_new;
+}
+
+// Filter test
+static void filter_thread(void)
+{
+    const struct zbus_channel *chan;
+    struct button_msg msg;
+    while (1) {
+        zbus_sub_wait(&filter_thread_sub, &chan, K_FOREVER);
+        zbus_chan_read(chan, &msg, ZBUS_READ_TIMEOUT_MS);
+
+        if (msg.button_pin == BUTTON_PLAY_PAUSE && msg.button_action == BUTTON_RELEASED) {
+			g_lowpass_on = !g_lowpass_on;
+        }
+
+    }
 }
 
 /**
@@ -86,11 +109,12 @@ static void button_msg_sub_thread(void)
 
 		switch (msg.button_pin) {
 		case BUTTON_PLAY_PAUSE:
+			
 			if (IS_ENABLED(CONFIG_WALKIE_TALKIE_DEMO)) {
 				LOG_WRN("Play/pause not supported in walkie-talkie mode");
 				break;
 			}
-
+			/* wegen filter auskommentiert
 			if (bt_content_ctlr_media_state_playing()) {
 				ret = bt_content_ctrl_stop(NULL);
 				if (ret) {
@@ -106,7 +130,7 @@ static void button_msg_sub_thread(void)
 			} else {
 				LOG_WRN("In invalid state: %d", strm_state);
 			}
-
+			*/
 			break;
 
 		case BUTTON_VOLUME_UP:
@@ -329,6 +353,17 @@ static int zbus_subscribers_create(void)
 		return ret;
 	}
 
+
+	filter_thread_id = k_thread_create(
+		&filter_thread_data, filter_thread_stack,
+		CONFIG_BUTTON_MSG_SUB_STACK_SIZE, (k_thread_entry_t)filter_thread, NULL,
+		NULL, NULL, K_PRIO_PREEMPT(CONFIG_BUTTON_MSG_SUB_THREAD_PRIO), 0, K_NO_WAIT);
+	ret = k_thread_name_set(filter_thread_id, "FILTER_THREAD");
+	if (ret) {
+		LOG_ERR("Failed to create filter thread");
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -424,7 +459,11 @@ static int zbus_link_producers_observers(void)
 		LOG_ERR("Failed to add volume sub");
 		return ret;
 	}
-
+	ret =zbus_chan_add_obs(&button_chan, &filter_thread_sub, ZBUS_ADD_OBS_TIMEOUT_MS);
+	if (ret) {
+		LOG_ERR("Failed to add filter thread sub");
+		return ret;
+	}
 	return 0;
 }
 

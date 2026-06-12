@@ -32,6 +32,7 @@
 #include "arm_math.h"
 
 #include <zephyr/logging/log.h>
+#include "filter_state.h"
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 
 /*
@@ -1064,6 +1065,23 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
 
+
+float alpha = 0.05;
+
+static void lp_filter(int16_t *data, int length)
+{
+	static int16_t data_prev_left = 0;
+	static int16_t data_prev_right = 0;
+	for(int i = 0; i < length;i+=2 )
+	{
+		data[i] = alpha * data[i] + (1-alpha)* data_prev_left;
+		data[i+1] = alpha * data[i+1] + (1-alpha) * data_prev_right;
+		data_prev_left = data[i];
+		data_prev_right =  data[i+1];
+	}
+
+}
+
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us)
 {
@@ -1167,7 +1185,9 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		//LOG_INF("out_blk_idx: %i", out_blk_idx);
 
 		//uint32_t start = k_cyc_to_us_floor32(k_cycle_get_32());
-		
+
+	if (g_lowpass_on) lp_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+
 #if CONFIG_EQAULIZER_SOFTWARE
 		equalize(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
 #endif
