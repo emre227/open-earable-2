@@ -33,6 +33,7 @@
 
 #include <zephyr/logging/log.h>
 #include "filter_state.h"
+#include "echo_test.h"
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 
 /*
@@ -1065,7 +1066,7 @@ void audio_datapath_pres_delay_us_get(uint32_t *delay_us)
 	*delay_us = ctrl_blk.pres_comp.pres_delay_us;
 }
 
-
+/* LP FILTER
 float alpha = 0.05;
 
 static void lp_filter(int16_t *data, int length)
@@ -1081,7 +1082,29 @@ static void lp_filter(int16_t *data, int length)
 	}
 
 }
+*/
 
+// ECHO FILTER
+static DW_echo_test_f_T     dw_left,  dw_right;
+static RT_MODEL_echo_test_T rtm_left, rtm_right;
+static const char_T        *err_left, *err_right;
+
+void echo_init(void)
+{
+    echo_test_initialize(&err_left,  &rtm_left,  &dw_left);
+    echo_test_initialize(&err_right, &rtm_right, &dw_right);
+}
+
+static void echo_filter(int16_t *data, int length)
+{
+    for (int i = 0; i < length; i += 2) {
+        int16_t out_l, out_r;
+        echo_test(&data[i],   &out_l, &dw_left);
+        echo_test(&data[i+1], &out_r, &dw_right);
+        data[i]   = out_l;
+        data[i+1] = out_r;
+    }
+}
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us)
 {
@@ -1186,8 +1209,8 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 
 		//uint32_t start = k_cyc_to_us_floor32(k_cycle_get_32());
 
-	if (g_lowpass_on) lp_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
-
+	//if (g_lowpass_on) lp_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+	if (g_lowpass_on) echo_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
 #if CONFIG_EQAULIZER_SOFTWARE
 		equalize(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
 #endif
@@ -1310,7 +1333,7 @@ int audio_datapath_init(void)
 	}
 
 	ctrl_blk.pres_comp.pres_delay_us = CONFIG_BT_AUDIO_PRESENTATION_DELAY_US;
-
+	echo_init();
 	return 0;
 }
 
