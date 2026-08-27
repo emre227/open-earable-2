@@ -29,7 +29,10 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/utils/fw_info_app.c.in"
 target_sources(app PRIVATE
 #    src/openearable_common.c
     ${CMAKE_BINARY_DIR}/fw_info_app.c
-    src/matlab/echo_test.c
+    src/matlab/echo/echo_filter.c
+    src/matlab/echo/const_params.c
+    src/matlab/hrtf/hrtf_filter.c
+    src/matlab/mw_arm_fir.c
     )
 
 if (CONFIG_BT_BAP_BROADCAST_SINK)
@@ -58,6 +61,9 @@ zephyr_library_include_directories(
     src/SD_Card/SD_Card_Manager
     src/time_sync
     src/matlab
+    src/matlab/echo
+    src/matlab/hrtf
+
 )
 
 zephyr_library_include_directories(app PRIVATE

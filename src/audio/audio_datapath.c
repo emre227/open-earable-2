@@ -33,7 +33,8 @@
 
 #include <zephyr/logging/log.h>
 #include "filter_state.h"
-#include "echo_test.h"
+#include "echo_filter.h"
+#include "hrtf_filter.h"
 LOG_MODULE_REGISTER(audio_datapath, CONFIG_AUDIO_DATAPATH_LOG_LEVEL);
 
 /*
@@ -174,8 +175,11 @@ static struct {
 #include "openearable_common.h"
 
 #define SENQUEUE_FRAME_SIZE 32
-
 static struct k_msgq * sensor_queue;
+
+// HRTF/ECHO FILTERS TIME MEAS
+volatile uint32_t g_hrtf_max_cyc = 0;
+/////
 
 //extern struct audio_data fifo_rx;
 
@@ -1085,26 +1089,64 @@ static void lp_filter(int16_t *data, int length)
 */
 
 // ECHO FILTER
-static DW_echo_test_f_T     dw_left,  dw_right;
-static RT_MODEL_echo_test_T rtm_left, rtm_right;
-static const char_T        *err_left, *err_right;
+static DW_echo_filter_f_T      echo_DW;
+static RT_MODEL_echo_filter_T  echo_M_;
+static const char_T           *echo_err;
+volatile uint32_t g_echo_max_cyc = 0;
 
 void echo_init(void)
 {
-    echo_test_initialize(&err_left,  &rtm_left,  &dw_left);
-    echo_test_initialize(&err_right, &rtm_right, &dw_right);
+    echo_filter_initialize(&echo_err, &echo_M_, &echo_DW);
+    echo_filter_Init(&echo_DW);
 }
 
-static void echo_filter(int16_t *data, int length)
+void echo_process(int16_t *buf, int length)
 {
-    for (int i = 0; i < length; i += 2) {
-        int16_t out_l, out_r;
-        echo_test(&data[i],   &out_l, &dw_left);
-        echo_test(&data[i+1], &out_r, &dw_right);
-        data[i]   = out_l;
-        data[i+1] = out_r;
+    if (length != 96) return;
+    int16_t L_in[48], R_in[48], L_out[48], R_out[48];
+    for (int i = 0; i < 48; i++) { L_in[i] = buf[2*i]; R_in[i] = buf[2*i+1]; }
+    echo_filter(L_in, R_in, L_out, R_out, &echo_DW);
+    for (int i = 0; i < 48; i++) { buf[2*i] = L_out[i]; buf[2*i+1] = R_out[i]; }
+}
+
+// HRTF Filter
+static DW_hrtf_filter_T        hrtf_DW;
+static RT_MODEL_hrtf_filter_T  hrtf_M_;
+static RT_MODEL_hrtf_filter_T *const hrtf_M = &hrtf_M_;
+
+static int cmd_hrtf_time(const struct shell *shell, size_t argc, const char **argv)
+{
+    shell_print(shell, "hrtf max: %u cyc = %u us", g_hrtf_max_cyc, g_hrtf_max_cyc / 128);
+	shell_print(shell, "echo max: %u cyc = %u us", g_echo_max_cyc, g_echo_max_cyc / 128);
+    return 0;
+}
+
+void hrtf_init(void)
+{
+    hrtf_M->dwork = &hrtf_DW;
+    int16_t l[48], r[48], lo[48], ro[48];
+    hrtf_filter_initialize(hrtf_M, l, r, lo, ro);
+}
+
+void hrtf_process(int16_t *buf, int length)
+{
+    if (length != 96) return;
+
+    int16_t L_in[48], R_in[48], L_out[48], R_out[48];
+
+    for (int i = 0; i < 48; i++) {
+        L_in[i] = buf[2*i];
+        R_in[i] = buf[2*i + 1];
+    }
+
+    hrtf_filter_step(hrtf_M, L_in, R_in, L_out, R_out);
+
+    for (int i = 0; i < 48; i++) {
+        buf[2*i]     = L_out[i];
+        buf[2*i + 1] = R_out[i];
     }
 }
+
 void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref_us, bool bad_frame,
 			       uint32_t recv_frame_ts_us)
 {
@@ -1208,9 +1250,26 @@ void audio_datapath_stream_out(const uint8_t *buf, size_t size, uint32_t sdu_ref
 		//LOG_INF("out_blk_idx: %i", out_blk_idx);
 
 		//uint32_t start = k_cyc_to_us_floor32(k_cycle_get_32());
-
+	
+	// FOR HRTF/ECHO/LP FILTERS
 	//if (g_lowpass_on) lp_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
-	if (g_lowpass_on) echo_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+	//if (g_lowpass_on) echo_filter(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+	//if (g_lowpass_on) hrtf_process(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+
+	if (g_lowpass_on) {
+		// HRTF
+		//uint32_t start = DWT->CYCCNT;
+		//hrtf_process(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+		//uint32_t cyc = DWT->CYCCNT - start;
+		//if (cyc > g_hrtf_max_cyc) g_hrtf_max_cyc = cyc;
+
+		// ECHO
+		uint32_t start = DWT->CYCCNT;
+		echo_process(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
+		uint32_t cyc = DWT->CYCCNT - start;
+		if (cyc > g_echo_max_cyc) g_echo_max_cyc = cyc;
+	}
+
 #if CONFIG_EQAULIZER_SOFTWARE
 		equalize(&ctrl_blk.out.fifo[out_blk_idx * BLK_STEREO_NUM_SAMPS], BLK_STEREO_NUM_SAMPS);
 #endif
@@ -1334,6 +1393,7 @@ int audio_datapath_init(void)
 
 	ctrl_blk.pres_comp.pres_delay_us = CONFIG_BT_AUDIO_PRESENTATION_DELAY_US;
 	echo_init();
+	hrtf_init();
 	return 0;
 }
 
@@ -1473,6 +1533,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(test_cmd,
 			       SHELL_COND_CMD(CONFIG_SHELL, pll_drift_comp_disable, NULL,
 					      "Disable audio PLL auto drift compensation",
 					      cmd_hfclkaudio_drift_comp_disable),
+				   SHELL_COND_CMD(CONFIG_SHELL, hrtf_time, NULL, "Show HRTF max cycle time", cmd_hrtf_time),
 			       SHELL_COND_CMD(CONFIG_SHELL, pll_pres_comp_enable, NULL,
 					      "Enable audio presentation compensation (default)",
 					      cmd_audio_pres_comp_enable),

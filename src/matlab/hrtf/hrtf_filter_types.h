@@ -3,27 +3,27 @@
  * course requirements at degree granting institutions only.  Not for
  * government, commercial, or other organizational use.
  *
- * File: echo_test_types.h
+ * File: hrtf_filter_types.h
  *
- * Code generated for Simulink model 'echo_test'.
+ * Code generated for Simulink model 'hrtf_filter'.
  *
- * Model version                  : 1.9
+ * Model version                  : 1.14
  * Simulink Coder version         : 25.1 (R2025a) 21-Nov-2024
- * C/C++ source code generated on : Wed Jun 17 14:22:28 2026
+ * C/C++ source code generated on : Wed Jul  1 16:55:49 2026
  *
  * Target selection: ert.tlc
- * Embedded hardware selection: Intel->x86-64 (Windows64)
+ * Embedded hardware selection: ARM Compatible->ARM Cortex-M
  * Code generation objectives: Unspecified
  * Validation result: Not run
  */
 
-#ifndef echo_test_types_h_
-#define echo_test_types_h_
+#ifndef hrtf_filter_types_h_
+#define hrtf_filter_types_h_
 
 /* Forward declaration for rtModel */
-typedef struct tag_RTM_echo_test_T RT_MODEL_echo_test_T;
+typedef struct tag_RTM_hrtf_filter_T RT_MODEL_hrtf_filter_T;
 
-#endif                                 /* echo_test_types_h_ */
+#endif                                 /* hrtf_filter_types_h_ */
 
 /*
  * File trailer for generated code.

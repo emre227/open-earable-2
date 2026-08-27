@@ -5,11 +5,11 @@
  *
  * File: rtwtypes.h
  *
- * Code generated for Simulink model 'echo_test'.
+ * Code generated for Simulink model 'echo_filter'.
  *
- * Model version                  : 1.1
+ * Model version                  : 1.15
  * Simulink Coder version         : 25.1 (R2025a) 21-Nov-2024
- * C/C++ source code generated on : Wed Jun 17 11:12:23 2026
+ * C/C++ source code generated on : Thu Jul  2 13:01:49 2026
  */
 
 #ifndef RTWTYPES_H
@@ -28,10 +28,10 @@
 
 /*=======================================================================*
  * Target hardware information
- *   Device type: Intel->x86-64 (Windows64)
+ *   Device type: ARM Compatible->ARM Cortex-M
  *   Number of bits:     char:   8    short:   16    int:  32
  *                       long:  32
- *                       native word size:  64
+ *                       native word size:  32
  *   Byte ordering: LittleEndian
  *   Signed integer division rounds to: Zero
  *   Shift right on a signed integer as arithmetic shift: on
