@@ -11,6 +11,7 @@ LOG_MODULE_REGISTER(ADAU1860, 3);
 
 #include "Lark-eq.c"
 #include "Lark-fdsp.c"
+#include "Lark-tdsp.c"
 
 ADAU1860 dac(&I2C2);
 
@@ -237,7 +238,8 @@ int ADAU1860::begin() {
         setup_FDSP();
         dac_route = DAC_ROUTE_DSP_CH(0);
 #endif
-#endif
+#endif  
+        setup_TDSP();
         writeReg(registers::DAC_ROUTE0, &dac_route, sizeof(dac_route));
 
         setup_DAC();
@@ -327,6 +329,53 @@ int ADAU1860::setup_EQ() {
 
         return 0;
 }
+
+int ADAU1860::setup_TDSP(){
+
+        uint8_t tdsp_run = 0x00;
+        uint8_t tdsp_soft_reset = 0x01;
+        uint8_t tdsp_altvec_en = 0x01;
+        // slice TDSP_ALTVEC_ADDR in 4 bytes
+        uint8_t tdsp_altvec_addr0 = TDSP_ALTVEC_ADDR & 0xFF;
+        uint8_t tdsp_altvec_addr1 = (TDSP_ALTVEC_ADDR >> 8) & 0xFF;
+        uint8_t tdsp_altvec_addr2 = (TDSP_ALTVEC_ADDR >> 16) & 0xFF;
+        uint8_t tdsp_altvec_addr3 = (TDSP_ALTVEC_ADDR >> 24) & 0xFF;
+
+        writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                     //stall tdsp core
+        writeReg(registers::TDSP_SOFT_RESET, &tdsp_soft_reset, sizeof(tdsp_soft_reset));                //soft reset tdsp core
+        
+        //load programm into IRAM0
+        tdsp_load(TDSP_IRAM0_BASE);
+        //set alt vector address
+        writeReg(registers::TDSP_ALTVEC_ADDR0, &tdsp_altvec_addr0, sizeof(tdsp_altvec_addr0));         
+        writeReg(registers::TDSP_ALTVEC_ADDR1, &tdsp_altvec_addr1, sizeof(tdsp_altvec_addr1));
+        writeReg(registers::TDSP_ALTVEC_ADDR2, &tdsp_altvec_addr2, sizeof(tdsp_altvec_addr2));
+        writeReg(registers::TDSP_ALTVEC_ADDR3, &tdsp_altvec_addr3, sizeof(tdsp_altvec_addr3));
+        //enable alt addr vector
+        writeReg(registers::TDSP_ALTVEC_EN, &tdsp_altvec_en, sizeof(tdsp_altvec_en));                   
+        tdsp_run = 0x01;
+        writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));
+
+        return 0;
+}       
+
+
+int ADAU1860::tdsp_load(uint32_t tdsp_iram0_start_addr) {
+        
+        int num_words = sizeof(tdsp_program) / sizeof(tdsp_program[0]);
+        int num_curr_words = num_words;
+        
+        while(num_curr_words > 0){
+                int curr_block_size = MIN(TDSP_BLOCK_SIZE, num_curr_words);
+                int words_progressed = num_words - num_curr_words;
+                uint32_t iram_target_addr = tdsp_iram0_start_addr + (words_progressed) * sizeof(tdsp_program[0]);
+                writeReg(iram_target_addr,(uint8_t*) (tdsp_program + (words_progressed)), sizeof(tdsp_program[0]) * curr_block_size);
+                num_curr_words -= curr_block_size;
+        }
+                
+        return 0;
+}
+
 
 int ADAU1860::setup_FDSP() {
         uint8_t dsp_pwr = 0x1;

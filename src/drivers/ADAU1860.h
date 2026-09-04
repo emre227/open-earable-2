@@ -38,6 +38,10 @@
 #define FDSP_USED_BANK_SIZE 5
 #define NOISE_GATE_ACTIVE
 
+#define TDSP_BLOCK_SIZE 127
+#define TDSP_IRAM0_BASE 0x5FFF8000   // TDSP L1 instruction ram start addr
+#define TDSP_ALTVEC_ADDR 0x00000000 //todo
+
 typedef uint32_t safe_load_params[FDSP_NUM_PARAMS];
 
 enum sl_address {
@@ -421,6 +425,7 @@ private:
 
     int setup_EQ();
     int setup_FDSP();
+    int setup_TDSP();
     int setup_DAC();
 
     int fdsp_mute(bool active);
@@ -429,6 +434,8 @@ private:
 
     int fdsp_safe_load(sl_address address, safe_load_params params, bool update_inactive = false);
     int fdsp_safe_load(sl_address address, int n, uint32_t param, bool update_inactive = false);
+     
+    int tdsp_load(uint32_t tdsp_iram0_start_addr);
 
     const uint16_t address = DT_REG_ADDR(DT_NODELABEL(adau1860));
 
