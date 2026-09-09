@@ -240,6 +240,7 @@ int ADAU1860::begin() {
 #endif
 #endif  
         setup_TDSP();
+        //dac_route = 48; // TDSP channel 0
         writeReg(registers::DAC_ROUTE0, &dac_route, sizeof(dac_route));
 
         setup_DAC();
@@ -340,41 +341,83 @@ int ADAU1860::setup_TDSP(){
         uint8_t tdsp_altvec_addr1 = (TDSP_ALTVEC_ADDR >> 8) & 0xFF;
         uint8_t tdsp_altvec_addr2 = (TDSP_ALTVEC_ADDR >> 16) & 0xFF;
         uint8_t tdsp_altvec_addr3 = (TDSP_ALTVEC_ADDR >> 24) & 0xFF;
+        //uint8_t chip_pwr = 0x47; kann raus
 
-        writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                     //stall tdsp core
-        writeReg(registers::TDSP_SOFT_RESET, &tdsp_soft_reset, sizeof(tdsp_soft_reset));                //soft reset tdsp core
-        
-        //load programm into IRAM0
-        tdsp_load(TDSP_IRAM0_BASE);
-        //set alt vector address
+        //enable tdsp core
+        //writeReg(registers::CHIP_PWR, &chip_pwr, sizeof(chip_pwr));   -> kein audio wenn an, kann raus                                         
+        //stall tdsp core
+        writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                             
+        //set alt vector address (sprungaddresse)
         writeReg(registers::TDSP_ALTVEC_ADDR0, &tdsp_altvec_addr0, sizeof(tdsp_altvec_addr0));         
         writeReg(registers::TDSP_ALTVEC_ADDR1, &tdsp_altvec_addr1, sizeof(tdsp_altvec_addr1));
         writeReg(registers::TDSP_ALTVEC_ADDR2, &tdsp_altvec_addr2, sizeof(tdsp_altvec_addr2));
         writeReg(registers::TDSP_ALTVEC_ADDR3, &tdsp_altvec_addr3, sizeof(tdsp_altvec_addr3));
         //enable alt addr vector
-        writeReg(registers::TDSP_ALTVEC_EN, &tdsp_altvec_en, sizeof(tdsp_altvec_en));                   
+        writeReg(registers::TDSP_ALTVEC_EN, &tdsp_altvec_en, sizeof(tdsp_altvec_en)); 
+        //load programm into DRAM0, DRAM1, IRAM0 and SRAM
+        tdsp_load(TDSP_DRAM0_LOAD_ADDR, tdsp_dram0, sizeof(tdsp_dram0)/sizeof(tdsp_dram0[0]));
+        tdsp_load(TDSP_DRAM1_LOAD_ADDR, tdsp_dram1, sizeof(tdsp_dram1)/sizeof(tdsp_dram1[0]));
+        tdsp_load(TDSP_IRAM0_LOAD_ADDR, tdsp_iram0, sizeof(tdsp_iram0)/sizeof(tdsp_iram0[0]));
+        tdsp_load(TDSP_SRAM_LOAD_ADDR, tdsp_sram, sizeof(tdsp_sram)/sizeof(tdsp_sram[0]));
+        //soft reset tdsp core
+        writeReg(registers::TDSP_SOFT_RESET, &tdsp_soft_reset, sizeof(tdsp_soft_reset));         
+        //set tdsp core to run              
         tdsp_run = 0x01;
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));
-
+        tdsp_debug();
         return 0;
 }       
 
 
-int ADAU1860::tdsp_load(uint32_t tdsp_iram0_start_addr) {
+int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_words) {
         
-        int num_words = sizeof(tdsp_program) / sizeof(tdsp_program[0]);
         int num_curr_words = num_words;
         
         while(num_curr_words > 0){
                 int curr_block_size = MIN(TDSP_BLOCK_SIZE, num_curr_words);
                 int words_progressed = num_words - num_curr_words;
-                uint32_t iram_target_addr = tdsp_iram0_start_addr + (words_progressed) * sizeof(tdsp_program[0]);
-                writeReg(iram_target_addr,(uint8_t*) (tdsp_program + (words_progressed)), sizeof(tdsp_program[0]) * curr_block_size);
+                uint32_t iram_target_addr = target_addr + (words_progressed) * sizeof(data[0]);
+                writeReg(iram_target_addr,(uint8_t*) (data + (words_progressed)), sizeof(data[0]) * curr_block_size);
                 num_curr_words -= curr_block_size;
         }
                 
         return 0;
 }
+
+int ADAU1860::tdsp_debug(){
+        // debug info, status etc.
+        uint8_t v;
+        uint8_t buf[4];
+
+        // core status
+        readReg(registers::TDSP_MODE_STATUS,  &v, 1); printk("MODE_STATUS : %02x\n", v);
+        readReg(registers::TDSP_ERROR_STATUS, &v, 1); printk("ERROR_STATUS: %02x\n", v);
+        readReg(SOC_ERROR_STATUS,             &v, 1); printk("SOC_ERR     : %02x\n", v);
+
+        readReg(registers::TDSP_FAULT_INFO1, buf, 4);
+        printk("FAULT_INFO  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+
+        // read chip configuration
+        readReg(registers::CHIP_PWR,       &v, 1); printk("CHIP_PWR    : %02x\n", v);
+        readReg(registers::TDSP_RUN,       &v, 1); printk("TDSP_RUN    : %02x\n", v);
+        readReg(registers::TDSP_ALTVEC_EN, &v, 1); printk("ALTVEC_EN   : %02x\n", v);
+
+        readReg(registers::TDSP_ALTVEC_ADDR0, buf, 4);
+        printk("ALTVEC_ADDR : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+
+         //dummy for own use
+        readReg(0x5FFF2000, buf, 4);
+        printk("LIVE_FLAG   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+
+        readReg(0x5FFF2004, buf, 4);
+        printk("LIVE_COUNT  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        k_msleep(50);
+        readReg(0x5FFF2004, buf, 4);
+        printk("LIVE_COUNT  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        
+
+        return 0;
+        }
 
 
 int ADAU1860::setup_FDSP() {
