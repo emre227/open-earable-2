@@ -13,7 +13,12 @@ LOG_MODULE_REGISTER(ADAU1860, 3);
 #include "Lark-fdsp.c"
 #include "Lark-tdsp.c"
 
+#include "channel_assignment.h"
+
 ADAU1860 dac(&I2C2);
+// temp
+#define TDSP_MON_STACK  1024
+#define TDSP_MON_PRIO   7
 
 static struct k_work_delayable ascr_lock_work;
 
@@ -238,9 +243,12 @@ int ADAU1860::begin() {
         setup_FDSP();
         dac_route = DAC_ROUTE_DSP_CH(0);
 #endif
-#endif  
+#endif
+
+#if CONFIG_TDSP
         setup_TDSP();
-        //dac_route = 48; // TDSP channel 0
+        dac_route = DAC_ROUTE_TDSP_CH(0); // TDSP channel 0
+#endif        
         writeReg(registers::DAC_ROUTE0, &dac_route, sizeof(dac_route));
 
         setup_DAC();
@@ -341,11 +349,11 @@ int ADAU1860::setup_TDSP(){
         uint8_t tdsp_altvec_addr1 = (TDSP_ALTVEC_ADDR >> 8) & 0xFF;
         uint8_t tdsp_altvec_addr2 = (TDSP_ALTVEC_ADDR >> 16) & 0xFF;
         uint8_t tdsp_altvec_addr3 = (TDSP_ALTVEC_ADDR >> 24) & 0xFF;
-        //uint8_t chip_pwr = 0x47; kann raus
 
-        //enable tdsp core
-        //writeReg(registers::CHIP_PWR, &chip_pwr, sizeof(chip_pwr));   -> kein audio wenn an, kann raus                                         
-        //stall tdsp core
+        uint8_t cs[4] = {0, 0, 0, 0};
+        enum audio_channel channel;
+                                       
+        //stall tdsp core, dont change PWR_CTRL register as it stops audio from working
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                             
         //set alt vector address (sprungaddresse)
         writeReg(registers::TDSP_ALTVEC_ADDR0, &tdsp_altvec_addr0, sizeof(tdsp_altvec_addr0));         
@@ -359,14 +367,24 @@ int ADAU1860::setup_TDSP(){
         tdsp_load(TDSP_DRAM1_LOAD_ADDR, tdsp_dram1, sizeof(tdsp_dram1)/sizeof(tdsp_dram1[0]));
         tdsp_load(TDSP_IRAM0_LOAD_ADDR, tdsp_iram0, sizeof(tdsp_iram0)/sizeof(tdsp_iram0[0]));
         tdsp_load(TDSP_SRAM_LOAD_ADDR, tdsp_sram, sizeof(tdsp_sram)/sizeof(tdsp_sram[0]));
+
+        //channel select
+        channel_assignment_get(&channel);
+        cs[0] = (channel == AUDIO_CH_L) ? 1 : 0;
+        writeReg(TDSP_CHANNEL_SELECT_ADDR, cs, 4);
+
         //soft reset tdsp core
         writeReg(registers::TDSP_SOFT_RESET, &tdsp_soft_reset, sizeof(tdsp_soft_reset));         
-        //set tdsp core to run              
+
+        //set tdsp core to run
         tdsp_run = 0x01;
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));
-        tdsp_debug();
+
+        //configure audio port datasync
+        tdsp_config_ds();
+        //tdsp_debug();
         return 0;
-}       
+}
 
 
 int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_words) {
@@ -381,6 +399,40 @@ int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_word
                 num_curr_words -= curr_block_size;
         }
                 
+        return 0;
+}
+
+int ADAU1860::tdsp_config_ds(){
+
+        uint8_t ds_ctrl[4] =        {0,0,0,0};
+        uint8_t ds_int_status[4] =  {0,0,0,0};
+        uint8_t sel0[4] =           {0,0,0,0};
+        uint8_t sel1[4] =           {0,0,0,0};
+        uint8_t ds_int_mask[4] =    {0,0,0,0};
+
+        // clear interrupt 
+        readReg(DS_INT_STATUS, ds_int_status, 4);
+        ds_int_status[1] = ds_int_status[1] | (1 << 7);
+        writeReg(DS_INT_STATUS, ds_int_status, 4);
+
+        // select ready signal source for TDSP output channels 0 and 1
+        readReg(DS_RDY2OUT_SEL0, sel0, 4);
+        readReg(DS_RDY2OUT_SEL1, sel1, 4);
+        sel0[0] = 0x0F;
+        sel1[0] = 0x0F;
+        writeReg(DS_RDY2OUT_SEL0, sel0, 4);
+        writeReg(DS_RDY2OUT_SEL1, sel1, 4);
+        
+        // enable tie lookup table
+        readReg(DS_CTRL, ds_ctrl, sizeof(ds_ctrl)); 
+        ds_ctrl[3] |= 0b00000001; // enable tie lookup table (bit 24)
+        writeReg(DS_CTRL, ds_ctrl, sizeof(ds_ctrl));
+        
+        // lift interrupt mask
+        readReg(DS_INT_MASK, ds_int_mask, 4);
+        ds_int_mask[1] = ds_int_mask[1] & ~(1 << 7);    
+        writeReg(DS_INT_MASK, ds_int_mask, 4);
+
         return 0;
 }
 
@@ -405,16 +457,18 @@ int ADAU1860::tdsp_debug(){
         readReg(registers::TDSP_ALTVEC_ADDR0, buf, 4);
         printk("ALTVEC_ADDR : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
 
-         //dummy for own use
-        readReg(0x5FFF2000, buf, 4);
-        printk("LIVE_FLAG   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-
-        readReg(0x5FFF2004, buf, 4);
-        printk("LIVE_COUNT  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-        k_msleep(50);
-        readReg(0x5FFF2004, buf, 4);
-        printk("LIVE_COUNT  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        //dummy for own use
+        /*
+        readReg(0x5fff08a0, buf, 4);
+        printk("live_flag   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
         
+        readReg(0x5fff09c4, buf, 4);
+        printk("sample0   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        readReg(0x5fff09c8, buf, 4);
+        printk("sample1   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        readReg(0x5fff09cc, buf, 4);
+        printk("counter  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        */
 
         return 0;
         }
@@ -691,3 +745,32 @@ SHELL_STATIC_SUBCMD_SET_CREATE(dsp_cmd,
 
 SHELL_CMD_REGISTER(dsp, &dsp_cmd, "Set DSP parameters", NULL);
 #endif
+
+
+void tdsp_monitor(void *p1, void *p2, void *p3){
+        //temp
+        uint8_t buf[4];
+ 
+        for (;;) {
+                k_msleep(1000);
+
+                dac.readReg(0x5fff0da0 , buf, 4);
+                printk("live_flag : %02x %02x %02x %02x\n",
+                       buf[3], buf[2], buf[1], buf[0]);
+
+                dac.readReg(0x5fff0d9c, buf, 4);
+                printk("overrun   : %u\n",
+                       ((uint32_t)buf[3] << 24) | ((uint32_t)buf[2] << 16) |
+                       ((uint32_t)buf[1] << 8)  |  (uint32_t)buf[0]);
+
+                dac.readReg(0x5fff0d80 , buf, 4);
+                printk("peak      : %d\n",
+                       (int16_t)(((uint32_t)buf[1] << 8) | (uint32_t)buf[0]));
+                
+                dac.readReg(0x5fff06e4,buf,4);
+                printk("CHANNEL SELECT: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        }
+}
+//temp
+K_THREAD_DEFINE(tdsp_mon_id, TDSP_MON_STACK, tdsp_monitor,
+                NULL, NULL, NULL, TDSP_MON_PRIO, 0, 5000);

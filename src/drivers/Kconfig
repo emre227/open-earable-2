@@ -41,6 +41,10 @@ config FDSP
 	default y
 	bool "Use FDSP the fast DSP core. This is required for Transparancy mode and ANC."
 
+config TDSP
+	default n
+	bool "Use the Tensilica HiFi 3z DSP core for HRTF filtering."
+
 module = CS47L63
 module-str = cs47l63
 source "subsys/logging/Kconfig.template.log_config"

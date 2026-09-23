@@ -34,17 +34,23 @@
 #define DAC_ROUTE_EQ 75
 #define DAC_ROUTE_I2S 0
 #define DAC_ROUTE_DSP_CH(N) (32 + N)
-
+#define DAC_ROUTE_TDSP_CH(N) (48 + N)
 #define FDSP_USED_BANK_SIZE 5
 #define NOISE_GATE_ACTIVE
 
-#define TDSP_BLOCK_SIZE 127               // (512 byte zephyr TWIM concat-buffer - 4 byte addr) / 4 B per word = 127 words per block
-#define TDSP_DRAM0_LOAD_ADDR 0x5FFF0000   // TDSP L1 data ram start addr
-#define TDSP_DRAM1_LOAD_ADDR 0x5FFF4000   // TDSP L1 data ram start addr
-#define TDSP_IRAM0_LOAD_ADDR 0x5FFF8240   // start addresse of program image (XCHAL_RESET_VECTOR1_VADDR of lark core config)
-#define TDSP_SRAM_LOAD_ADDR 0x60000000    // TDSP L2 data ram start addr
-#define TDSP_ALTVEC_ADDR 0x5FFF8240       // sprungaddresse (program start)
-#define SOC_ERROR_STATUS 0x40002024
+#define TDSP_BLOCK_SIZE 127                 // (512 byte zephyr TWIM concat-buffer - 4 byte addr) / 4 B per word = 127 words per block
+#define TDSP_DRAM0_LOAD_ADDR 0x5FFF0000     // TDSP L1 data ram start addr
+#define TDSP_DRAM1_LOAD_ADDR 0x5FFF4000     // TDSP L1 data ram start addr
+#define TDSP_IRAM0_LOAD_ADDR 0x5FFF8240     // start addresse of program image (XCHAL_RESET_VECTOR1_VADDR of lark core config)
+#define TDSP_SRAM_LOAD_ADDR 0x60000000      // TDSP L2 data ram start addr
+#define TDSP_ALTVEC_ADDR 0x5FFF8240         // sprungaddresse (program start)
+#define SOC_ERROR_STATUS 0x40002024         // bit 0 fatal error, bit 1 double exception
+#define DS_CTRL 0x40040300                  // bit 24 = LT_EN, enables tie lookup interface. bits [15:0] rate div, reset 0x1FF for 48 khz
+#define DS_RDY2OUT_SEL0 0x40040380          // clock source per channel. reset 0x1F means no source = no audio. 0x0F = FDSP, 0x05 = SPT0
+#define DS_RDY2OUT_SEL1 0x40040384          //
+#define DS_INT_STATUS 0x40040310            // clear interrupt
+#define DS_INT_MASK 0x4004030C              // clearing bit 15 (= 0) lifts the interrupt mask. do this at the end of the ds config, else the tdsp crashes because no handler is registered
+#define TDSP_CHANNEL_SELECT_ADDR 0x5fff06e4 // do this in the terminal after building TDSP program, to find the proper address: xt-nm <projekt> | findstr channel_select
 
 typedef uint32_t safe_load_params[FDSP_NUM_PARAMS];
 
@@ -415,7 +421,8 @@ public:
     int setup();
     int mute(bool active);
     int set_volume(uint8_t volume);
-
+    bool readReg(uint32_t reg, uint8_t * buffer, uint16_t len); //tmp für debug, war vorher in priv
+    void writeReg(uint32_t reg, uint8_t * buffer, uint16_t len);//tmp für debug, war vorher in pri
     int soft_reset(bool full_reset = false);
 
     uint8_t get_volume();
@@ -424,8 +431,7 @@ public:
     int fdsp_bank_select(uint8_t bank);
 #endif
 private:
-    bool readReg(uint32_t reg, uint8_t * buffer, uint16_t len);
-    void writeReg(uint32_t reg, uint8_t * buffer, uint16_t len);
+
 
     int setup_EQ();
     int setup_FDSP();
@@ -440,8 +446,8 @@ private:
     int fdsp_safe_load(sl_address address, int n, uint32_t param, bool update_inactive = false);
      
     int tdsp_load(uint32_t target_addr, const uint32_t *data, int num_words);
+    int tdsp_config_ds();
     int tdsp_debug();
-
     const uint16_t address = DT_REG_ADDR(DT_NODELABEL(adau1860));
 
     const struct gpio_dt_spec dac_enable_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(adau1860), enable_gpios);
