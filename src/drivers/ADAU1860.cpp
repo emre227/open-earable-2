@@ -11,14 +11,13 @@ LOG_MODULE_REGISTER(ADAU1860, 3);
 
 #include "Lark-eq.c"
 #include "Lark-fdsp.c"
-#include "Lark-tdsp.c"
 
+#if CONFIG_TDSP
+#include "Lark-tdsp.c"
 #include "channel_assignment.h"
+#endif
 
 ADAU1860 dac(&I2C2);
-// temp
-#define TDSP_MON_STACK  1024
-#define TDSP_MON_PRIO   7
 
 static struct k_work_delayable ascr_lock_work;
 
@@ -248,7 +247,8 @@ int ADAU1860::begin() {
 #if CONFIG_TDSP
         setup_TDSP();
         dac_route = DAC_ROUTE_TDSP_CH(0); // TDSP channel 0
-#endif        
+#endif
+
         writeReg(registers::DAC_ROUTE0, &dac_route, sizeof(dac_route));
 
         setup_DAC();
@@ -276,7 +276,11 @@ int ADAU1860::setup_DAC() {
         uint8_t hpldo_ctrl = 0x01;
         writeReg(registers::HPLDO_CTRL, &hpldo_ctrl, sizeof(hpldo_ctrl));
 
-        uint8_t dac_ctrl1 = 0x02; //0x02 = 48kHz   //0x04 =  192kz
+#if CONFIG_TDSP
+        uint8_t dac_ctrl1 = 0x02; // 48 kHz
+#else
+        uint8_t dac_ctrl1 = 0x04; // 192 kHz 
+#endif
         writeReg(registers::DAC_CTRL1, &dac_ctrl1, sizeof(dac_ctrl1));
 
         // DAC_NOISE_CTRL1&2
@@ -338,7 +342,7 @@ int ADAU1860::setup_EQ() {
 
         return 0;
 }
-
+#if CONFIG_TDSP
 int ADAU1860::setup_TDSP(){
 
         uint8_t tdsp_run = 0x00;
@@ -353,7 +357,7 @@ int ADAU1860::setup_TDSP(){
         uint8_t cs[4] = {0, 0, 0, 0};
         enum audio_channel channel;
                                        
-        //stall tdsp core, dont change PWR_CTRL register as it stops audio from working
+        //stall tdsp core, changing CHIP_PWR to active resets the SOC domain and kills audio
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                             
         //set alt vector address (sprungaddresse)
         writeReg(registers::TDSP_ALTVEC_ADDR0, &tdsp_altvec_addr0, sizeof(tdsp_altvec_addr0));         
@@ -381,7 +385,9 @@ int ADAU1860::setup_TDSP(){
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));
 
         //configure audio port datasync
+        k_msleep(10); // give tdsp time to register interrupt handler
         tdsp_config_ds();
+
         //tdsp_debug();
         return 0;
 }
@@ -405,14 +411,12 @@ int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_word
 int ADAU1860::tdsp_config_ds(){
 
         uint8_t ds_ctrl[4] =        {0,0,0,0};
-        uint8_t ds_int_status[4] =  {0,0,0,0};
+        uint8_t ds_int_status[4] = {0, 0, 1 , 0}; // bit 16 in byte 2 (bit 16 = EQ)
         uint8_t sel0[4] =           {0,0,0,0};
         uint8_t sel1[4] =           {0,0,0,0};
         uint8_t ds_int_mask[4] =    {0,0,0,0};
 
         // clear interrupt 
-        readReg(DS_INT_STATUS, ds_int_status, 4);
-        ds_int_status[2] |= (1 << 0);
         writeReg(DS_INT_STATUS, ds_int_status, 4);
 
         // select ready signal source for TDSP output channels 0 and 1
@@ -457,22 +461,26 @@ int ADAU1860::tdsp_debug(){
         readReg(registers::TDSP_ALTVEC_ADDR0, buf, 4);
         printk("ALTVEC_ADDR : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
 
-        //dummy for own use
-        /*
-        readReg(0x5fff08a0, buf, 4);
-        printk("live_flag   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-        
-        readReg(0x5fff09c4, buf, 4);
-        printk("sample0   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-        readReg(0x5fff09c8, buf, 4);
-        printk("sample1   : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-        readReg(0x5fff09cc, buf, 4);
-        printk("counter  : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-        */
+        //model state
+        readReg(TDSP_LIVE_FLAG_ADDR, buf, 4);
+        printk("LIVE_FLAG : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+
+        readReg(TDSP_CHANNEL_SELECT_ADDR,buf,4);
+        printk("CHANNEL SELECT: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+
+        readReg(TDSP_SOURCE_ADDR,buf,4);
+        printk("SOURCE: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
 
         return 0;
-        }
+}
 
+int ADAU1860::tdsp_set_source(uint8_t source[4]) {
+
+        writeReg(TDSP_SOURCE_ADDR, source, 4);
+        return 0;
+}
+
+#endif
 
 int ADAU1860::setup_FDSP() {
         uint8_t dsp_pwr = 0x1;
@@ -747,39 +755,21 @@ SHELL_CMD_REGISTER(dsp, &dsp_cmd, "Set DSP parameters", NULL);
 #endif
 
 
-void tdsp_monitor(void *p1, void *p2, void *p3){
-        //temp
-        uint8_t buf[4];
-        uint8_t c10, c13;
-        dac.readReg(ADAU1860::registers::CLK_CTRL10, &c10, 1);
-        dac.readReg(ADAU1860::registers::CLK_CTRL13, &c13, 1);
-        printk("CLK_CTRL10: 0x%02x  CLK_CTRL13: 0x%02x\n", c10, c13);
-        uint8_t toggle_l_r_source[4] = {0,0,0,0};
-        
+#if CONFIG_TDSP
+// temp: toggles HRTF source every 10 s, to be replaced by seq_num based switching
+#define TDSP_SRC_STACK 1024
+#define TDSP_SRC_PRIO  7
+
+static void tdsp_source_toggle(void *p1, void *p2, void *p3) {
+        uint8_t source[4] = {0, 0, 0, 0};
+
         for (;;) {
-                
                 k_msleep(10000);
-
-                //dac.readReg(0x5fff0a08, buf, 4);
-                //printk("source: %02x %02x %02x %02x\n",buf[3], buf[2], buf[1], buf[0]);
-                dac.writeReg(0x5fff0a08,toggle_l_r_source, 4);
-                //dac.readReg(0x5fff0a08, buf, 4);
-                //printk("source: %02x %02x %02x %02x\n",buf[3], buf[2], buf[1], buf[0]);
-                toggle_l_r_source[0] = !toggle_l_r_source[0];
-
-                dac.readReg(0x5fff0a1c, buf, 4);
-                printk("live_flag : %02x %02x %02x %02x\n",
-                       buf[3], buf[2], buf[1], buf[0]);
-
-                dac.readReg(0x5fff0a10, buf, 4);
-                printk("peak      : %d\n",
-                       (int16_t)(((uint32_t)buf[1] << 8) | (uint32_t)buf[0]));
-
-                dac.readReg(TDSP_CHANNEL_SELECT_ADDR,buf,4);
-                printk("CHANNEL SELECT: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
-                
+                dac.tdsp_set_source(source);
+                source[0] = !source[0];
         }
 }
-//temp
-K_THREAD_DEFINE(tdsp_mon_id, TDSP_MON_STACK, tdsp_monitor,
-                NULL, NULL, NULL, TDSP_MON_PRIO, 0, 5000);
+
+K_THREAD_DEFINE(tdsp_src_id, TDSP_SRC_STACK, tdsp_source_toggle,
+                NULL, NULL, NULL, TDSP_SRC_PRIO, 0, 5000);
+#endif
