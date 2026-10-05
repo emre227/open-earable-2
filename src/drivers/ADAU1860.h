@@ -50,7 +50,7 @@
 #define DS_RDY2OUT_SEL1 0x40040384          //
 #define DS_INT_STATUS 0x40040310            // clear interrupt
 #define DS_INT_MASK 0x4004030C              // clearing bit 15 (= 0) lifts the interrupt mask. do this at the end of the ds config, else the tdsp crashes because no handler is registered
-#define TDSP_CHANNEL_SELECT_ADDR 0x5fff06e4 // do this in the terminal after building TDSP program, to find the proper address: xt-nm <projekt> | findstr channel_select
+#define TDSP_CHANNEL_SELECT_ADDR 0x5fff0a04 // do this in the terminal after building TDSP program, to find the proper address: xt-nm <projekt> | findstr channel_select
 
 typedef uint32_t safe_load_params[FDSP_NUM_PARAMS];
 

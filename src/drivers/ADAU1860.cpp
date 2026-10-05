@@ -276,7 +276,7 @@ int ADAU1860::setup_DAC() {
         uint8_t hpldo_ctrl = 0x01;
         writeReg(registers::HPLDO_CTRL, &hpldo_ctrl, sizeof(hpldo_ctrl));
 
-        uint8_t dac_ctrl1 = 0x04; // 192kz
+        uint8_t dac_ctrl1 = 0x02; //0x02 = 48kHz   //0x04 =  192kz
         writeReg(registers::DAC_CTRL1, &dac_ctrl1, sizeof(dac_ctrl1));
 
         // DAC_NOISE_CTRL1&2
@@ -412,14 +412,14 @@ int ADAU1860::tdsp_config_ds(){
 
         // clear interrupt 
         readReg(DS_INT_STATUS, ds_int_status, 4);
-        ds_int_status[1] = ds_int_status[1] | (1 << 7);
+        ds_int_status[2] |= (1 << 0);
         writeReg(DS_INT_STATUS, ds_int_status, 4);
 
         // select ready signal source for TDSP output channels 0 and 1
         readReg(DS_RDY2OUT_SEL0, sel0, 4);
         readReg(DS_RDY2OUT_SEL1, sel1, 4);
-        sel0[0] = 0x0F;
-        sel1[0] = 0x0F;
+        sel0[0] = 16;
+        sel1[0] = 16;
         writeReg(DS_RDY2OUT_SEL0, sel0, 4);
         writeReg(DS_RDY2OUT_SEL1, sel1, 4);
         
@@ -430,7 +430,7 @@ int ADAU1860::tdsp_config_ds(){
         
         // lift interrupt mask
         readReg(DS_INT_MASK, ds_int_mask, 4);
-        ds_int_mask[1] = ds_int_mask[1] & ~(1 << 7);    
+        ds_int_mask[2] &= ~(1 << 0);
         writeReg(DS_INT_MASK, ds_int_mask, 4);
 
         return 0;
@@ -750,25 +750,34 @@ SHELL_CMD_REGISTER(dsp, &dsp_cmd, "Set DSP parameters", NULL);
 void tdsp_monitor(void *p1, void *p2, void *p3){
         //temp
         uint8_t buf[4];
- 
+        uint8_t c10, c13;
+        dac.readReg(ADAU1860::registers::CLK_CTRL10, &c10, 1);
+        dac.readReg(ADAU1860::registers::CLK_CTRL13, &c13, 1);
+        printk("CLK_CTRL10: 0x%02x  CLK_CTRL13: 0x%02x\n", c10, c13);
+        uint8_t toggle_l_r_source[4] = {0,0,0,0};
+        
         for (;;) {
-                k_msleep(1000);
+                
+                k_msleep(10000);
 
-                dac.readReg(0x5fff0da0 , buf, 4);
+                //dac.readReg(0x5fff0a08, buf, 4);
+                //printk("source: %02x %02x %02x %02x\n",buf[3], buf[2], buf[1], buf[0]);
+                dac.writeReg(0x5fff0a08,toggle_l_r_source, 4);
+                //dac.readReg(0x5fff0a08, buf, 4);
+                //printk("source: %02x %02x %02x %02x\n",buf[3], buf[2], buf[1], buf[0]);
+                toggle_l_r_source[0] = !toggle_l_r_source[0];
+
+                dac.readReg(0x5fff0a1c, buf, 4);
                 printk("live_flag : %02x %02x %02x %02x\n",
                        buf[3], buf[2], buf[1], buf[0]);
 
-                dac.readReg(0x5fff0d9c, buf, 4);
-                printk("overrun   : %u\n",
-                       ((uint32_t)buf[3] << 24) | ((uint32_t)buf[2] << 16) |
-                       ((uint32_t)buf[1] << 8)  |  (uint32_t)buf[0]);
-
-                dac.readReg(0x5fff0d80 , buf, 4);
+                dac.readReg(0x5fff0a10, buf, 4);
                 printk("peak      : %d\n",
                        (int16_t)(((uint32_t)buf[1] << 8) | (uint32_t)buf[0]));
-                
-                dac.readReg(0x5fff06e4,buf,4);
+
+                dac.readReg(TDSP_CHANNEL_SELECT_ADDR,buf,4);
                 printk("CHANNEL SELECT: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+                
         }
 }
 //temp
