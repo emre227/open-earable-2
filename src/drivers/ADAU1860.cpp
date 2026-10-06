@@ -366,11 +366,8 @@ int ADAU1860::setup_TDSP(){
         writeReg(registers::TDSP_ALTVEC_ADDR3, &tdsp_altvec_addr3, sizeof(tdsp_altvec_addr3));
         //enable alt addr vector
         writeReg(registers::TDSP_ALTVEC_EN, &tdsp_altvec_en, sizeof(tdsp_altvec_en)); 
-        //load programm into DRAM0, DRAM1, IRAM0 and SRAM
-        tdsp_load(TDSP_DRAM0_LOAD_ADDR, tdsp_dram0, sizeof(tdsp_dram0)/sizeof(tdsp_dram0[0]));
-        tdsp_load(TDSP_DRAM1_LOAD_ADDR, tdsp_dram1, sizeof(tdsp_dram1)/sizeof(tdsp_dram1[0]));
-        tdsp_load(TDSP_IRAM0_LOAD_ADDR, tdsp_iram0, sizeof(tdsp_iram0)/sizeof(tdsp_iram0[0]));
-        tdsp_load(TDSP_SRAM_LOAD_ADDR, tdsp_sram, sizeof(tdsp_sram)/sizeof(tdsp_sram[0]));
+        //load program into TDSP ram starting from DRAM0
+        tdsp_load(TDSP_IMAGE_LOAD_ADDR, tdsp_image, ARRAY_SIZE(tdsp_image));
 
         //channel select
         channel_assignment_get(&channel);
@@ -400,8 +397,8 @@ int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_word
         while(num_curr_words > 0){
                 int curr_block_size = MIN(TDSP_BLOCK_SIZE, num_curr_words);
                 int words_progressed = num_words - num_curr_words;
-                uint32_t iram_target_addr = target_addr + (words_progressed) * sizeof(data[0]);
-                writeReg(iram_target_addr,(uint8_t*) (data + (words_progressed)), sizeof(data[0]) * curr_block_size);
+                uint32_t block_addr = target_addr + (words_progressed) * sizeof(data[0]);
+                writeReg(block_addr,(uint8_t*) (data + (words_progressed)), sizeof(data[0]) * curr_block_size);
                 num_curr_words -= curr_block_size;
         }
                 

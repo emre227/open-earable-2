@@ -39,11 +39,8 @@
 #define NOISE_GATE_ACTIVE
 
 #define TDSP_BLOCK_SIZE 127                     // (512 byte zephyr TWIM concat-buffer - 4 byte addr) / 4 B per word = 127 words per block
-#define TDSP_DRAM0_LOAD_ADDR 0x5FFF0000         // TDSP L1 data ram start addr
-#define TDSP_DRAM1_LOAD_ADDR 0x5FFF4000         // TDSP L1 data ram start addr
-#define TDSP_IRAM0_LOAD_ADDR 0x5FFF8240         // start addresse of program image (XCHAL_RESET_VECTOR1_VADDR of lark core config)
-#define TDSP_SRAM_LOAD_ADDR 0x60000000          // TDSP L2 data ram start addr
-#define TDSP_ALTVEC_ADDR TDSP_IRAM0_LOAD_ADDR   // sprungaddresse (program start)
+#define TDSP_IMAGE_LOAD_ADDR 0x5FFF0000         // image base = start of DRAM0
+#define TDSP_ALTVEC_ADDR 0x5FFF8240             // sprungaddresse (program start)
 #define SOC_ERROR_STATUS 0x40002024             // bit 0 fatal error, bit 1 double exception
 #define DS_CTRL 0x40040300                      // bit 24 = LT_EN, enables tie lookup interface. bits [15:0] rate div, reset 0x1FF for 48 khz
 #define DS_RDY2OUT_SEL0 0x40040380              // clock source per channel. reset 0x1F means no source = no audio. 0x0F = FDSP, 0x05 = SPT0, 0x10 = EQ
