@@ -15,6 +15,9 @@ LOG_MODULE_REGISTER(ADAU1860, 3);
 #if CONFIG_TDSP
 #include "Lark-tdsp.c"
 #include "channel_assignment.h"
+static tdsp_data_container tdsp_data{};
+#define HOST_OFFSET offsetof(tdsp_data_container, channel_select)
+extern const k_tid_t tdsp_src_id;
 #endif
 
 ADAU1860 dac(&I2C2);
@@ -345,6 +348,7 @@ int ADAU1860::setup_EQ() {
 #if CONFIG_TDSP
 int ADAU1860::setup_TDSP(){
 
+        LOG_INF("setup_TDSP start");
         uint8_t tdsp_run = 0x00;
         uint8_t tdsp_soft_reset = 0x01;
         uint8_t tdsp_altvec_en = 0x01;
@@ -354,9 +358,16 @@ int ADAU1860::setup_TDSP(){
         uint8_t tdsp_altvec_addr2 = (TDSP_ALTVEC_ADDR >> 16) & 0xFF;
         uint8_t tdsp_altvec_addr3 = (TDSP_ALTVEC_ADDR >> 24) & 0xFF;
 
-        uint8_t cs[4] = {0, 0, 0, 0};
         enum audio_channel channel;
-                                       
+        
+        // mask ds interrupts from last run
+        uint8_t ds_int_mask[4];
+        readReg(DS_INT_MASK, ds_int_mask, 4);
+        ds_int_mask[2] |= (1 << 0);
+        writeReg(DS_INT_MASK, ds_int_mask, 4);
+        uint8_t ds_int_status[4] = {0, 0, 1, 0};
+        writeReg(DS_INT_STATUS, ds_int_status, 4);
+
         //stall tdsp core, changing CHIP_PWR to active resets the SOC domain and kills audio
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));                                             
         //set alt vector address (sprungaddresse)
@@ -369,11 +380,6 @@ int ADAU1860::setup_TDSP(){
         //load program into TDSP ram starting from DRAM0
         tdsp_load(TDSP_IMAGE_LOAD_ADDR, tdsp_image, ARRAY_SIZE(tdsp_image));
 
-        //channel select
-        channel_assignment_get(&channel);
-        cs[0] = (channel == AUDIO_CH_L) ? 1 : 0;
-        writeReg(TDSP_CHANNEL_SELECT_ADDR, cs, 4);
-
         //soft reset tdsp core
         writeReg(registers::TDSP_SOFT_RESET, &tdsp_soft_reset, sizeof(tdsp_soft_reset));         
 
@@ -381,14 +387,36 @@ int ADAU1860::setup_TDSP(){
         tdsp_run = 0x01;
         writeReg(registers::TDSP_RUN, &tdsp_run, sizeof(tdsp_run));
 
+        // wait for tdsp to register isr
+        int tries = 0;
+        do {
+                k_msleep(1);
+                tdsp_data_container_read(tdsp_data);
+        } while (!tdsp_data.isr_ready && ++tries < 100);
+
+        if (!tdsp_data.isr_ready) {
+                LOG_ERR("TDSP did not start/ register ISR");
+                tdsp_debug();
+                return -1;
+        }
+        
+        //channel select (right or left earable)
+        channel_assignment_get(&channel);
+        tdsp_data.channel_select = (channel == AUDIO_CH_L) ? 1 : 0;
+        if (tdsp_data_container_write(tdsp_data) != 0) {
+          LOG_WRN("TDSP: channel select not written");
+        }
+
         //configure audio port datasync
-        k_msleep(10); // give tdsp time to register interrupt handler
         tdsp_config_ds();
 
-        //tdsp_debug();
+        //start toggle thread
+        k_thread_start(tdsp_src_id);
+
+        LOG_INF("setup_TDSP() done, TDSP running");
+
         return 0;
 }
-
 
 int ADAU1860::tdsp_load(uint32_t target_addr, const uint32_t *data, int num_words) {
         
@@ -458,22 +486,35 @@ int ADAU1860::tdsp_debug(){
         readReg(registers::TDSP_ALTVEC_ADDR0, buf, 4);
         printk("ALTVEC_ADDR : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
 
-        //model state
-        readReg(TDSP_LIVE_FLAG_ADDR, buf, 4);
-        printk("LIVE_FLAG : %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        return 0;
+}
 
-        readReg(TDSP_CHANNEL_SELECT_ADDR,buf,4);
-        printk("CHANNEL SELECT: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+int ADAU1860::tdsp_data_container_write(tdsp_data_container &data_container){
+        // send local data_container copy to tdsp
+        int err = tdsp_data_container_read(data_container);
+        if (err != 0){
+                return err;
+        }
 
-        readReg(TDSP_SOURCE_ADDR,buf,4);
-        printk("SOURCE: %02x %02x %02x %02x\n", buf[3], buf[2], buf[1], buf[0]);
+        bool last_data_taken = (data_container.time_stamp == data_container.last_time_stamp);
+        if (!last_data_taken) {
+                return -1;
+        }
+
+        data_container.time_stamp++;
+        writeReg(TDSP_DATA_CONTAINER_ADDR + HOST_OFFSET, (uint8_t*)&data_container + HOST_OFFSET , sizeof(data_container) - HOST_OFFSET);
 
         return 0;
 }
 
-int ADAU1860::tdsp_set_source(uint8_t source[4]) {
+int ADAU1860::tdsp_data_container_read(tdsp_data_container &data_container){
+        // read tdsp data container into local copy
+        bool success = readReg(TDSP_DATA_CONTAINER_ADDR, (uint8_t*) &data_container, HOST_OFFSET);
 
-        writeReg(TDSP_SOURCE_ADDR, source, 4);
+        if(!success){
+                return -1;
+        }
+
         return 0;
 }
 
@@ -753,20 +794,19 @@ SHELL_CMD_REGISTER(dsp, &dsp_cmd, "Set DSP parameters", NULL);
 
 
 #if CONFIG_TDSP
-// temp: toggles HRTF source every 10 s, to be replaced by seq_num based switching
+// temp: toggles HRTF source every 10 s
 #define TDSP_SRC_STACK 1024
 #define TDSP_SRC_PRIO  7
 
 static void tdsp_source_toggle(void *p1, void *p2, void *p3) {
-        uint8_t source[4] = {0, 0, 0, 0};
 
         for (;;) {
                 k_msleep(10000);
-                dac.tdsp_set_source(source);
-                source[0] = !source[0];
+                tdsp_data.source_select = !tdsp_data.source_select;
+                dac.tdsp_data_container_write(tdsp_data);
         }
 }
-
+// Definition: nicht automatisch starten
 K_THREAD_DEFINE(tdsp_src_id, TDSP_SRC_STACK, tdsp_source_toggle,
-                NULL, NULL, NULL, TDSP_SRC_PRIO, 0, 5000);
+                NULL, NULL, NULL, TDSP_SRC_PRIO, 0, -1);
 #endif

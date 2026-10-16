@@ -38,6 +38,9 @@
 #define FDSP_USED_BANK_SIZE 5
 #define NOISE_GATE_ACTIVE
 
+#if CONFIG_TDSP
+#include "tdsp_data_container.h"
+#define TDSP_DATA_CONTAINER_ADDR 0x5fff0a10     // address of tdsp_data_container in tdsp ram, from xt-nm of the matching tdsp build
 #define TDSP_BLOCK_SIZE 127                     // (512 byte zephyr TWIM concat-buffer - 4 byte addr) / 4 B per word = 127 words per block
 #define TDSP_IMAGE_LOAD_ADDR 0x5FFF0000         // image base = start of DRAM0
 #define TDSP_ALTVEC_ADDR 0x5FFF8240             // sprungaddresse (program start)
@@ -47,11 +50,7 @@
 #define DS_RDY2OUT_SEL1 0x40040384              //
 #define DS_INT_STATUS 0x40040310                // clear interrupt
 #define DS_INT_MASK 0x4004030C                  // clearing bit 16 lifts the interrupt mask. do this at the end of the ds config, else the tdsp crashes because no handler is registered
-
-//tdsp variable addresses
-#define TDSP_CHANNEL_SELECT_ADDR 0x5fff0a04     // do this in the terminal after building TDSP program, to find the proper address: xt-nm <projekt> | findstr channel_select
-#define TDSP_SOURCE_ADDR         0x5fff0a08
-#define TDSP_LIVE_FLAG_ADDR      0x5fff0a1c
+#endif
 
 typedef uint32_t safe_load_params[FDSP_NUM_PARAMS];
 
@@ -432,8 +431,9 @@ public:
 #endif
 
 #if CONFIG_TDSP
-    int tdsp_set_source(uint8_t source[4]);
     int tdsp_debug();
+    int tdsp_data_container_write(tdsp_data_container &data_container);
+    int tdsp_data_container_read(tdsp_data_container &data_container);
 #endif
 
 private:
