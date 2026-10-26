@@ -18,6 +18,7 @@ LOG_MODULE_REGISTER(ADAU1860, 3);
 static tdsp_data_container tdsp_data{};
 #define HOST_OFFSET offsetof(tdsp_data_container, channel_select)
 extern const k_tid_t tdsp_src_id;
+extern const k_tid_t tdsp_monitor_id;
 #endif
 
 ADAU1860 dac(&I2C2);
@@ -404,15 +405,15 @@ int ADAU1860::setup_TDSP(){
         channel_assignment_get(&channel);
         tdsp_data.channel_select = (channel == AUDIO_CH_L) ? 1 : 0;
         if (tdsp_data_container_write(tdsp_data) != 0) {
-          LOG_WRN("TDSP: channel select not written");
+                LOG_WRN("TDSP: channel select not written");
         }
 
         //configure audio port datasync
         tdsp_config_ds();
 
         //start toggle thread
-        k_thread_start(tdsp_src_id);
-
+        //k_thread_start(tdsp_src_id);
+        k_thread_start(tdsp_monitor_id);
         LOG_INF("setup_TDSP() done, TDSP running");
 
         return 0;
@@ -806,7 +807,31 @@ static void tdsp_source_toggle(void *p1, void *p2, void *p3) {
                 dac.tdsp_data_container_write(tdsp_data);
         }
 }
-// Definition: nicht automatisch starten
+
 K_THREAD_DEFINE(tdsp_src_id, TDSP_SRC_STACK, tdsp_source_toggle,
                 NULL, NULL, NULL, TDSP_SRC_PRIO, 0, -1);
+#endif
+
+#if CONFIG_TDSP
+static void tdsp_monitor(void *p1, void *p2, void *p3)
+{
+    uint32_t c_prev = 0, t_prev = k_uptime_get_32();
+    bool first = true;
+
+    while (true) {
+        k_msleep(2000);
+
+        dac.tdsp_data_container_read(tdsp_data);
+        uint32_t c = tdsp_data.isr_count;
+        uint32_t t = k_uptime_get_32();
+
+        if (!first) {
+            uint32_t rate = (uint32_t)((uint64_t)(c - c_prev) * 1000u / (t - t_prev));
+            printk("TDSP isr: %u /s (soll 48000)\n", rate);
+        }
+        c_prev = c; t_prev = t; first = false;
+    }
+}
+K_THREAD_DEFINE(tdsp_monitor_id, 1024, tdsp_monitor, NULL, NULL, NULL,
+                K_LOWEST_APPLICATION_THREAD_PRIO, 0, -1);
 #endif

@@ -40,7 +40,7 @@
 
 #if CONFIG_TDSP
 #include "tdsp_data_container.h"
-#define TDSP_DATA_CONTAINER_ADDR 0x5fff0a10     // address of tdsp_data_container in tdsp ram, from xt-nm of the matching tdsp build
+#define TDSP_DATA_CONTAINER_ADDR 0x5fff0c4c     // address of tdsp_data_container in tdsp ram, from xt-nm of the matching tdsp build
 #define TDSP_BLOCK_SIZE 127                     // (512 byte zephyr TWIM concat-buffer - 4 byte addr) / 4 B per word = 127 words per block
 #define TDSP_IMAGE_LOAD_ADDR 0x5FFF0000         // image base = start of DRAM0
 #define TDSP_ALTVEC_ADDR 0x5FFF8240             // sprungaddresse (program start)
